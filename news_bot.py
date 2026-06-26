@@ -6,7 +6,7 @@ anything already posted (dedup via state/posted.json), and post each new qualify
 item to Telegram with a branded card + source attribution. Posts promptly (not in
 batches) because it runs every ~15 min and posts each new item as it appears.
 """
-import os, io, re, json, time, hashlib, urllib.request
+import os, io, re, json, time, hashlib, urllib.request, urllib.error
 from datetime import datetime, timezone, timedelta
 import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
@@ -153,12 +153,22 @@ def post(h,src,link,framing=None):
     ctx=framing if framing else "Shared purely for educational market context."
     cap=("⚠️ Education only - not investment advice.\n\n\U0001f4f0 "+h+"\n\n"+ctx+
          "\n\nSource: "+src+" - "+link+"\n\nNot a recommendation to buy, sell, or hold.")
+    if len(cap)>1024: cap=cap[:1021].rstrip()+"…"   # Telegram photo-caption hard limit
     bd="----fin"+uuid.uuid4().hex
     def p(n,v): return (f'--{bd}\r\nContent-Disposition: form-data; name="{n}"\r\n\r\n{v}\r\n').encode()
     body=p("chat_id",CHANNEL)+p("caption",cap)
     body+=(f'--{bd}\r\nContent-Disposition: form-data; name="photo"; filename="n.jpg"\r\nContent-Type: image/jpeg\r\n\r\n').encode()+card(h,src).read()+f'\r\n--{bd}--\r\n'.encode()
     r=urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",data=body,headers={"Content-Type":f"multipart/form-data; boundary={bd}"})
-    return json.load(urllib.request.urlopen(r,timeout=60)).get("ok")
+    try:
+        return json.load(urllib.request.urlopen(r,timeout=60)).get("ok")
+    except urllib.error.HTTPError as e:
+        try: detail=e.read().decode("utf-8","replace")[:300]
+        except Exception: detail=""
+        print(f"[post] Telegram HTTP {e.code} for '{h[:60]}': {detail}")
+        return False
+    except Exception as e:
+        print(f"[post] Telegram error for '{h[:60]}': {e}")
+        return False
 
 def main():
     st=load_state(); today=datetime.now(IST).date().isoformat()
